@@ -158,8 +158,7 @@ class RTCClient(RTCBase):
         return self._getProjectAreas(archived=archived,
                                      returned_properties=returned_properties)
 
-    def getProjectArea(self, projectarea_name, archived=False,
-                       returned_properties=None):
+    def getProjectArea(self, projectarea_name, archived=False, returned_properties=None):
         """Get :class:`rtcclient.project_area.ProjectArea` object by its name
 
         :param projectarea_name: the project area name
@@ -171,20 +170,30 @@ class RTCClient(RTCBase):
         :rtype: rtcclient.project_area.ProjectArea
         """
 
-        if not isinstance(projectarea_name,
-                          six.string_types) or not projectarea_name:
+        if not isinstance(projectarea_name, six.string_types) or not projectarea_name:
             excp_msg = "Please specify a valid ProjectArea name"
             self.log.error(excp_msg)
             raise exception.BadValue(excp_msg)
 
         self.log.debug("Try to get <ProjectArea %s>", projectarea_name)
         rp = returned_properties
-        proj_areas = self._getProjectAreas(archived=archived,
-                                           returned_properties=rp,
-                                           projectarea_name=projectarea_name)
+        proj_areas = self._getProjectAreas(archived=archived, returned_properties=rp, projectarea_name=projectarea_name)
+        
+        print('getProjectArea() archived=')
+        print(archived)
+        
+        print('getProjectArea() returned_properties=')
+        print(rp)
+
+        print('getProjectArea() projectarea_name=')
+        print(projectarea_name)
+        
+        print('getProjectArea() proj_areas = ')
+        print(proj_areas)
 
         if proj_areas is not None:
             proj_area = proj_areas[0]
+            print("getProjectArea() Find <ProjectArea %s>", proj_area)
             self.log.info("Find <ProjectArea %s>", proj_area)
             return proj_area
 
@@ -1369,64 +1378,64 @@ class RTCClient(RTCBase):
         resources_list = []
 
         with ProcessPool() as executor:
-        while True:
+            while True:
                 entries = raw_data.get("oslc_cm:Collection", {}).get(entry_map[resource_name])
 
-            if entries is None:
-                break
+                if entries is None:
+                    break
 
-            # for the last single entry
-            if isinstance(entries, OrderedDict):
-                    resource = self._handle_resource_entry(
-                        resource_name,
-                                                       entries,
-                                                       projectarea_url=pa_url,
-                                                       archived=archived,
-                        filter_rule=filter_rule,
-                    )
-                if resource is not None:
-                    resources_list.append(resource)
-                break
+                    # for the last single entry
+                    if isinstance(entries, OrderedDict):
+                            resource = self._handle_resource_entry(
+                                resource_name,
+                                                            entries,
+                                                            projectarea_url=pa_url,
+                                                            archived=archived,
+                                filter_rule=filter_rule,
+                            )
+                            if resource is not None:
+                                resources_list.append(resource)
+                            break
 
-                def handle_resource_entry(entry):
-                    return self._handle_resource_entry(
-                        resource_name,
-                                                       entry,
-                                                       projectarea_url=pa_url,
-                                                       archived=archived,
-                        filter_rule=filter_rule,
-                    )
+                            def handle_resource_entry(entry):
+                                return self._handle_resource_entry(
+                                    resource_name,
+                                                                entry,
+                                                                projectarea_url=pa_url,
+                                                                archived=archived,
+                                    filter_rule=filter_rule,
+                                )
 
-                # process all the entries
-                resources = executor.imap(
-                    handle_resource_entry,
-                    entries,
-                )
+                            # process all the entries
+                            resources = executor.imap(
+                                handle_resource_entry,
+                                entries,
+                            )
 
-            # find the next page
-                url_next = raw_data.get("oslc_cm:Collection").get("@oslc_cm:next")
-            if url_next:
-                    resp = self.get(
-                        url_next, verify=False, proxies=self.proxies, headers=self.headers
-                    )
-                raw_data = xmltodict.parse(resp.content)
-            else:
-                    raw_data = {}
+                    # find the next page
+                    url_next = raw_data.get("oslc_cm:Collection").get("@oslc_cm:next")
+                    if url_next:
+                            resp = self.get(
+                                url_next, verify=False, proxies=self.proxies, headers=self.headers
+                            )
+                            raw_data = xmltodict.parse(resp.content)
+                    else:
+                            raw_data = {}
 
-                for resource in list(resources):
-                    if resource is not None:
-                        resources_list.append(resource)
+                    for resource in list(resources):
+                        if resource is not None:
+                            resources_list.append(resource)
 
-        if not resources_list:
-            self.log.warning("No %ss are found with [ProjectArea ID: %s] "
-                             "and [archived=%s]",
-                             resource_name,
-                             projectarea_id if projectarea_id
-                             else "not specified",
-                             archived)
-            return None
+                if not resources_list:
+                    self.log.warning("No %ss are found with [ProjectArea ID: %s] "
+                                    "and [archived=%s]",
+                                    resource_name,
+                                    projectarea_id if projectarea_id
+                                    else "not specified",
+                                    archived)
+                    return None
 
-        self.log.debug("Successfully fetching all the paged resources")
+            self.log.debug("Successfully fetching all the paged resources")
         return resources_list
 
     def _handle_resource_entry(self, resource_name, entry,
