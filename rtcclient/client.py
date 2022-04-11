@@ -158,8 +158,7 @@ class RTCClient(RTCBase):
         return self._getProjectAreas(archived=archived,
                                      returned_properties=returned_properties)
 
-    def getProjectArea(self, projectarea_name, archived=False,
-                       returned_properties=None):
+    def getProjectArea(self, projectarea_name, archived=False, returned_properties=None):
         """Get :class:`rtcclient.project_area.ProjectArea` object by its name
 
         :param projectarea_name: the project area name
@@ -171,33 +170,33 @@ class RTCClient(RTCBase):
         :rtype: rtcclient.project_area.ProjectArea
         """
 
-        if not isinstance(projectarea_name,
-                          six.string_types) or not projectarea_name:
+        if not isinstance(projectarea_name, six.string_types) or not projectarea_name:
             excp_msg = "Please specify a valid ProjectArea name"
             self.log.error(excp_msg)
             raise exception.BadValue(excp_msg)
 
         self.log.debug("Try to get <ProjectArea %s>", projectarea_name)
         rp = returned_properties
-        proj_areas = self._getProjectAreas(archived=archived,
-                                           returned_properties=rp,
-                                           projectarea_name=projectarea_name)
+        proj_areas = self._getProjectAreas(archived=archived, returned_properties=rp, projectarea_name=projectarea_name)
         
-        print('archived=')
+        print('getProjectArea() archived=')
         print(archived)
         
-        print('returned_properties=')
+        print('getProjectArea() returned_properties=')
         print(rp)
 
-        print('projectarea_name=')
+        print('getProjectArea() projectarea_name=')
         print(projectarea_name)
         
-        print('proj_areas = ')
+        print('getProjectArea() proj_areas = ')
+
         print(proj_areas)
 
         if proj_areas is not None:
             proj_area = proj_areas[0]
-            print("Find <ProjectArea %s>", proj_area)
+
+            print("getProjectArea() Find <ProjectArea %s>", proj_area)
+
             self.log.info("Find <ProjectArea %s>", proj_area)
             return proj_area
 
