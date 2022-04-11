@@ -189,11 +189,14 @@ class RTCClient(RTCBase):
         print(projectarea_name)
         
         print('getProjectArea() proj_areas = ')
+
         print(proj_areas)
 
         if proj_areas is not None:
             proj_area = proj_areas[0]
+
             print("getProjectArea() Find <ProjectArea %s>", proj_area)
+
             self.log.info("Find <ProjectArea %s>", proj_area)
             return proj_area
 
