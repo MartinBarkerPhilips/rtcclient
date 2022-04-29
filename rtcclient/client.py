@@ -1,4 +1,3 @@
-from pathos.pools import ProcessPool
 from rtcclient.base import RTCBase
 import xmltodict
 from rtcclient import exception
@@ -15,7 +14,9 @@ from rtcclient.template import Templater
 from rtcclient import _search_path
 from rtcclient.query import Query
 import six
-
+from multiprocessing.pool import ThreadPool as Pool
+from rtcclient import requests
+import urllib.parse
 
 class RTCClient(RTCBase):
     """A wrapped class for :class:`RTC Client` to perform all related
@@ -158,7 +159,8 @@ class RTCClient(RTCBase):
         return self._getProjectAreas(archived=archived,
                                      returned_properties=returned_properties)
 
-    def getProjectArea(self, projectarea_name, archived=False, returned_properties=None):
+    def getProjectArea(self, projectarea_name, archived=False,
+                       returned_properties=None):
         """Get :class:`rtcclient.project_area.ProjectArea` object by its name
 
         :param projectarea_name: the project area name
@@ -170,33 +172,20 @@ class RTCClient(RTCBase):
         :rtype: rtcclient.project_area.ProjectArea
         """
 
-        if not isinstance(projectarea_name, six.string_types) or not projectarea_name:
+        if not isinstance(projectarea_name,
+                          six.string_types) or not projectarea_name:
             excp_msg = "Please specify a valid ProjectArea name"
             self.log.error(excp_msg)
             raise exception.BadValue(excp_msg)
 
         self.log.debug("Try to get <ProjectArea %s>", projectarea_name)
         rp = returned_properties
-        proj_areas = self._getProjectAreas(archived=archived, returned_properties=rp, projectarea_name=projectarea_name)
-        
-        print('getProjectArea() archived=')
-        print(archived)
-        
-        print('getProjectArea() returned_properties=')
-        print(rp)
-
-        print('getProjectArea() projectarea_name=')
-        print(projectarea_name)
-        
-        print('getProjectArea() proj_areas = ')
-
-        print(proj_areas)
+        proj_areas = self._getProjectAreas(archived=archived,
+                                           returned_properties=rp,
+                                           projectarea_name=projectarea_name)
 
         if proj_areas is not None:
             proj_area = proj_areas[0]
-
-            print("getProjectArea() Find <ProjectArea %s>", proj_area)
-
             self.log.info("Find <ProjectArea %s>", proj_area)
             return proj_area
 
@@ -1002,6 +991,252 @@ class RTCClient(RTCBase):
             return None
         return workitems_list
 
+    def getChildrenInfo(self, parent_id):
+        child_ids = []
+
+        headers = copy.deepcopy(self.headers)
+        verify=False
+        proxies=None
+        timeout=60
+        kwargs={}
+        url="https://rtcus1.ta.philips.com/ccm/oslc/workitems/"+parent_id+"/rtc_cm:com.ibm.team.workitem.linktype.parentworkitem.children"
+
+        requests.packages.urllib3.disable_warnings()
+        requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        try:
+            requests.packages.urllib3.contrib.pyopenssl.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        except AttributeError:
+            # no pyopenssl support used / needed / available
+            pass
+
+        response = requests.get(url, verify=verify, headers=headers, proxies=proxies, timeout=timeout, **kwargs)
+        if response.status_code != 200:
+            self.log.error('Failed GET request at <%s> with response: %s', url, response.content)
+            response.raise_for_status()
+        
+        #retreive user email from xml
+        raw_data = xmltodict.parse(response.content)
+        root_key = list(raw_data.keys())[0]
+        #get type of changeRequest field
+        fieldType = type(raw_data[root_key].get("oslc_cm:ChangeRequest"))
+        # print('getChildrenInfo() fieldType='+str(fieldType))
+        if raw_data[root_key].get("oslc_cm:ChangeRequest") is None:
+            child_ids={}
+        else:
+            child_ids={}
+            #if type is list, than there are more then one child
+            if fieldType == list:
+                #get number of child tickets
+                number_of_children = len(raw_data[root_key].get("oslc_cm:ChangeRequest"))
+                for i in range(number_of_children):
+                    # print("getting child " + str(i) + " out of " + str(number_of_children))
+                    
+                    #get child id
+                    child_id = raw_data[root_key].get("oslc_cm:ChangeRequest")[i].get("@oslc_cm:label")
+                    child_id = child_id.partition(':')[0]
+
+                    # print("child_id = "+ str(child_id))
+
+                    #get child ticket type
+                    child_type=''
+                    error_status='false'
+                    try:
+                        # get child type and convert to lowercase
+                        wip_child_type=(raw_data[root_key].get("oslc_cm:ChangeRequest")[i]["dc:type"].get("@rdf:resource")).lower()
+
+                        # get everything after last slash '/'
+                        wip_child_type = wip_child_type.split("/")[-1]
+
+                        # if period char '.' exists in string, get everything after that char
+                        if '.' in wip_child_type:
+                            wip_child_type = wip_child_type.split(".")[-1]
+
+                        # this will be our child type
+                        child_type = wip_child_type
+
+                    except Exception as e:
+                        errMsg = "unable to get child_type, err = "+str(e)
+                        error_status=errMsg
+                        print(errMsg) 
+
+                    # print("child_type = "+str(child_type))
+
+                    #append to child_ids
+                    child_ids[str(child_id)]={
+                        'type':child_type, 
+                        'error_status':error_status
+                    }
+                    # child_ids.append({'id':child_id, 'type':child_type, 'error_status':error_status})
+
+            #else if type is not list, there is only one child
+            else:
+                #get single child id
+                child_id = raw_data[root_key].get("oslc_cm:ChangeRequest").get("@oslc_cm:label")
+                child_id = child_id.partition(':')[0]
+                #get single child type
+                # child_type = (raw_data[root_key].get("oslc_cm:ChangeRequest")["dc:type"].get("@rdf:resource")).split(".")[-1]
+
+                # get child type and convert to lowercase
+                wip_child_type=(raw_data[root_key].get("oslc_cm:ChangeRequest")["dc:type"].get("@rdf:resource")).lower()
+
+                # get everything after last slash '/'
+                wip_child_type = wip_child_type.split("/")[-1]
+
+                # if period char '.' exists in string, get everything after that char
+                if '.' in wip_child_type:
+                    wip_child_type = wip_child_type.split(".")[-1]
+
+                # this will be our child type
+                child_type = wip_child_type
+
+                #append to child_ids
+                # child_ids.append({'id':child_id, 'type':child_type})
+                child_ids[str(child_id)]={
+                    'type':child_type, 
+                }
+
+        return child_ids
+
+    def getXmlField(self, url, field):
+        headers = copy.deepcopy(self.headers)
+        verify=False
+        proxies=None
+        timeout=60
+        kwargs={}
+        requests.packages.urllib3.disable_warnings()
+        requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        try:
+            requests.packages.urllib3.contrib.pyopenssl.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        except AttributeError:
+            # no pyopenssl support used / needed / available
+            pass
+
+        response = requests.get(url, verify=verify, headers=headers, proxies=proxies, timeout=timeout, **kwargs)
+        if response.status_code != 200:
+            self.log.error('Failed GET request at <%s> with response: %s', url, response.content)
+            response.raise_for_status()
+
+        #retreive user email from xml
+        raw_data = xmltodict.parse(response.content)
+        root_key = list(raw_data.keys())[0]
+        #get type of changeRequest field
+        xmlVal = raw_data[root_key].get(field)
+        return xmlVal
+
+    def getTeamTrackBool(self, url):
+        headers = copy.deepcopy(self.headers)
+        verify=False
+        proxies=None
+        timeout=60
+        kwargs={}
+        requests.packages.urllib3.disable_warnings()
+        requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        try:
+            requests.packages.urllib3.contrib.pyopenssl.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        except AttributeError:
+            # no pyopenssl support used / needed / available
+            pass
+
+        response = requests.get(url, verify=verify, headers=headers, proxies=proxies, timeout=timeout, **kwargs)
+        if response.status_code != 200:
+            self.log.error('Failed GET request at <%s> with response: %s', url, response.content)
+            response.raise_for_status()
+
+        #retreive user email from xml
+        raw_data = xmltodict.parse(response.content)
+        root_key = list(raw_data.keys())[0]
+        #get type of changeRequest field
+        teamTrackVal = raw_data[root_key].get("dc:title")
+        return teamTrackVal
+
+    def getXmlDict(self, url):
+        headers = copy.deepcopy(self.headers)
+        verify=False
+        proxies=None
+        timeout=60
+        kwargs={}
+        requests.packages.urllib3.disable_warnings()
+        requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        try:
+            requests.packages.urllib3.contrib.pyopenssl.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        except AttributeError:
+            # no pyopenssl support used / needed / available
+            pass
+
+        response = requests.get(url, verify=verify, headers=headers, proxies=proxies, timeout=timeout, **kwargs)
+        if response.status_code != 200:
+            self.log.error('Failed GET request at <%s> with response: %s', url, response.content)
+            response.raise_for_status()
+        else:
+            #retreive user email from xml
+            raw_data = xmltodict.parse(response.content)
+            root_key = list(raw_data.keys())[0]
+            #get type of changeRequest field
+            retVal = raw_data[root_key]
+            return retVal 
+
+    def getFeaturePlannedForValue(self, url):
+        headers = copy.deepcopy(self.headers)
+        verify=False
+        proxies=None
+        timeout=60
+        kwargs={}
+        requests.packages.urllib3.disable_warnings()
+        requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        try:
+            requests.packages.urllib3.contrib.pyopenssl.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        except AttributeError:
+            # no pyopenssl support used / needed / available
+            pass
+
+        response = requests.get(url, verify=verify, headers=headers, proxies=proxies, timeout=timeout, **kwargs)
+        if response.status_code != 200:
+            self.log.error('Failed GET request at <%s> with response: %s', url, response.content)
+            response.raise_for_status()
+        else:
+            #retreive user email from xml
+            raw_data = xmltodict.parse(response.content)
+            root_key = list(raw_data.keys())[0]
+            #get type of changeRequest field
+            retVal = raw_data[root_key].get("dc:identifier")
+            return retVal
+
+    def getUserEmail(self, user_id):
+        userEmail = ""
+
+        headers = copy.deepcopy(self.headers)
+        verify=False
+        proxies=None
+        timeout=60
+        kwargs={}
+        url="https://rtcus1.ta.philips.com/ccm/oslc/users/"+user_id
+
+        requests.packages.urllib3.disable_warnings()
+        requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        try:
+            requests.packages.urllib3.contrib.pyopenssl.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+        except AttributeError:
+            # no pyopenssl support used / needed / available
+            pass
+
+        response = requests.get(url, verify=verify, headers=headers,
+                                proxies=proxies, timeout=timeout, **kwargs)
+        if response.status_code != 200:
+            self.log.error('Failed GET request at <%s> with response: %s',
+                           url,
+                           response.content)
+            response.raise_for_status()
+        
+        #retreive user email from xml
+        raw_data = xmltodict.parse(response.content)
+        root_key = list(raw_data.keys())[0]
+        userEmail = raw_data[root_key].get("rtc_cm:emailAddress")
+        #url decode and trim 'mailto:'
+        userEmail = urllib.parse.unquote(userEmail).replace('mailto:', '')
+
+        return userEmail
+
+
     def _validate_returned_properties(self, returned_properties=None):
         if returned_properties is not None:
             # retrieve project area info and state
@@ -1380,65 +1615,54 @@ class RTCClient(RTCBase):
 
         resources_list = []
 
-        with ProcessPool() as executor:
-            while True:
-                entries = raw_data.get("oslc_cm:Collection", {}).get(entry_map[resource_name])
+        while True:
+            entries = (raw_data.get("oslc_cm:Collection")
+                               .get(entry_map[resource_name]))
 
-                if entries is None:
-                    break
+            if entries is None:
+                break
 
-                    # for the last single entry
-                    if isinstance(entries, OrderedDict):
-                            resource = self._handle_resource_entry(
-                                resource_name,
-                                                            entries,
-                                                            projectarea_url=pa_url,
-                                                            archived=archived,
-                                filter_rule=filter_rule,
-                            )
-                            if resource is not None:
-                                resources_list.append(resource)
-                            break
+            # for the last single entry
+            if isinstance(entries, OrderedDict):
+                resource = self._handle_resource_entry(resource_name,
+                                                       entries,
+                                                       projectarea_url=pa_url,
+                                                       archived=archived,
+                                                       filter_rule=filter_rule)
+                if resource is not None:
+                    resources_list.append(resource)
+                break
 
-                            def handle_resource_entry(entry):
-                                return self._handle_resource_entry(
-                                    resource_name,
-                                                                entry,
-                                                                projectarea_url=pa_url,
-                                                                archived=archived,
-                                    filter_rule=filter_rule,
-                                )
+            # iterate all the entries
+            with Pool() as p:
+                resources_list = list(
+                    filter(
+                        None,
+                        p.starmap(self._handle_resource_entry,
+                                  [(resource_name, entry, pa_url, archived,
+                                    filter_rule) for entry in entries])))
 
-                            # process all the entries
-                            resources = executor.imap(
-                                handle_resource_entry,
-                                entries,
-                            )
+            # find the next page
+            url_next = raw_data.get('oslc_cm:Collection').get('@oslc_cm:next')
+            if url_next:
+                resp = self.get(url_next,
+                                verify=False,
+                                proxies=self.proxies,
+                                headers=self.headers)
+                raw_data = xmltodict.parse(resp.content)
+            else:
+                break
 
-                    # find the next page
-                    url_next = raw_data.get("oslc_cm:Collection").get("@oslc_cm:next")
-                    if url_next:
-                            resp = self.get(
-                                url_next, verify=False, proxies=self.proxies, headers=self.headers
-                            )
-                            raw_data = xmltodict.parse(resp.content)
-                    else:
-                            raw_data = {}
+        if not resources_list:
+            self.log.warning("No %ss are found with [ProjectArea ID: %s] "
+                             "and [archived=%s]",
+                             resource_name,
+                             projectarea_id if projectarea_id
+                             else "not specified",
+                             archived)
+            return None
 
-                    for resource in list(resources):
-                        if resource is not None:
-                            resources_list.append(resource)
-
-                if not resources_list:
-                    self.log.warning("No %ss are found with [ProjectArea ID: %s] "
-                                    "and [archived=%s]",
-                                    resource_name,
-                                    projectarea_id if projectarea_id
-                                    else "not specified",
-                                    archived)
-                    return None
-
-            self.log.debug("Successfully fetching all the paged resources")
+        self.log.debug("Successfully fetching all the paged resources")
         return resources_list
 
     def _handle_resource_entry(self, resource_name, entry,
